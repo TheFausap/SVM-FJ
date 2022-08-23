@@ -1,14 +1,15 @@
-import array, sys, os
+import array
+import os
 
-CPUBITS  = 8
-MEMLOC   = 4096
-STKSIZE  = 100
+CPUBITS = 8
+MEMLOC = 4096
+STKSIZE = 100
 PGMSTART = 0
 
 # Memory addresses will be always aligned to 8 bits boundary
 # The latest STKLOC locations are reserved for the stack
 MEMSIZE = MEMLOC * CPUBITS
-STKLOC  = MEMLOC * CPUBITS
+STKLOC = MEMLOC * CPUBITS
 PGMAREA = PGMSTART * CPUBITS
 mem0 = [0] * MEMSIZE
 mem = array.array('b', mem0)
@@ -80,6 +81,7 @@ def _psp():
 def lblfind(l):
     global labels
     global lblnf
+    l = l.strip()
     for ll in labels:
         if l == ll[0]:
             return int(ll[1])
@@ -180,7 +182,9 @@ def _arg(f):
     global c, endf
     c = f.read(1)
     a = ""
-    while (c != '#' and c != '$' and c != '!' and c != '\\' and c != '@' and c != '[' and c != '{'):
+    while (c != '#' and c != '$' and c != '!' and c != '\\'
+           and c != '@' and c != '[' and c != '{'
+           and c != '<' and c != ">"):
         if not c:
             break
         a = a + c
@@ -250,13 +254,17 @@ def _load(fn):
         elif c == '!':
             a = _arg(f)
             if _isint(a):
+                a = a
+            else:
+                a = a.strip()
+            if _isint(a):
                 _memwrite(pc, ord(c))
                 nbytes = nbytes + CPUBITS
                 _npc()
                 _memwrite(pc, a)
                 nbytes = nbytes + CPUBITS
                 _npc()
-            elif a[0] == 'j':
+            elif a[0] == 'j' or a[0] == 'l' or a[0] == 'g' or a[0] == 'z' or a[0] == 'n':
                 _memwrite(pc, ord(a[0]))
                 nbytes = nbytes + CPUBITS
                 _npc()
@@ -264,6 +272,7 @@ def _load(fn):
                     _memwrite(pc, PGMAREA + int(a[1:]))
                 else:
                     _memwrite(pc, PGMAREA + lblfind(a[1:]))
+                # nbytes = nbytes + CPUBITS
                 _npc()
             elif a == '+':
                 _memwrite(pc, ord(a))
@@ -275,17 +284,32 @@ def _load(fn):
                 else:
                     _memwrite(pc, ord(a[0]) + 48)
                 nbytes = nbytes + CPUBITS
+                _npc()
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '$':
             a = _arg(f)
             _memwrite(pc, ord(c))
             nbytes = nbytes + CPUBITS
             _npc()
-            lblput((a,nbytes))
+            lblput((a, nbytes))
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '+':
             _memwrite(pc, ord(c))
             _npc()
+        elif c == '>':
+            a = _arg(f)
+            a = a << 6
+            _memwrite(pc, ord(c) + a)
+            nbytes = nbytes + CPUBITS
+            _npc()
+            f.seek(f.tell() - 1, os.SEEK_SET)
+        elif c == '<':
+            a = _arg(f)
+            a = a << 6
+            _memwrite(pc, ord(c) + a)
+            nbytes = nbytes + CPUBITS
+            _npc()
+            f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '\\':
             _memwrite(pc, ord(c))
             endf = True
@@ -345,8 +369,35 @@ def _exec():
         elif c == ord('j'):
             _npc()
             pc = _memread(pc)
+        elif c == ord('l'):
+            _npc()
+            if ev == 2:
+                pc = _memread(pc)
+            else:
+                _npc()
         elif (c == ord('C') + 12) or (c == ord('C') + 48):
             cmp(c & 0x3c)
+            _npc()
+        elif c == ord('<') or (c == ord('<') + 64) or (c == ord('<') + 128) or (c == ord('<') + 192):
+            if (c & 0xC0) == 0:
+                r0 = r0 - 1
+            elif (c & 0xC0) == 1:
+                r1 = r1 - 1
+            elif (c & 0xC0) == 2:
+                r2 = r2 - 1
+            elif (c & 0xC0) == 3:
+                r3 = r3 - 1
+            _npc()
+        elif c == ord('>') or (c == ord('>') + 64) or (c == ord('>') + 128) or (c == ord('>') + 192):
+            if (c & 0xC0) >> 6 == 0:
+                r0 = r0 + 1
+            elif (c & 0xC0) >> 6 == 1:
+                r1 = r1 + 1
+            elif (c & 0xC0) >> 6 == 2:
+                r2 = r2 + 1
+            elif (c & 0xC0) >> 6 == 3:
+                r3 = r3 + 1
+            _npc()
         else:
             pass
 
