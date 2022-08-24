@@ -193,7 +193,7 @@ def _arg(f):
     a = ""
     while (c != '#' and c != '$' and c != '!' and c != '\\'
            and c != '@' and c != '[' and c != '{'
-           and c != '<' and c != ">"):
+           and c != '<' and c != ">" and c != "`"):
         if not c:
             break
         a = a + c
@@ -319,6 +319,7 @@ def _load(f, count):
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '+':
             _memwrite(pc, ord(c))
+            nbytes = nbytes + CPUBITS
             pc = _npc(pc)
         elif c == '>':
             a = _arg(f)
@@ -341,6 +342,20 @@ def _load(f, count):
             lblput((a[0], vp))
             nb = _load(StringIO(a[1]), vp)
             vp = vp + nb - CPUBITS
+            f.seek(f.tell() - 1, os.SEEK_SET)
+        elif c == '`':
+            a = _arg(f)
+            _memwrite(pc, ord(c))
+            nbytes = nbytes + CPUBITS
+            pc = _npc(pc)
+            ah = lblfind(a) >> 8
+            al = lblfind(a) & 0xff
+            _memwrite(pc, al)
+            nbytes = nbytes + CPUBITS
+            pc = _npc(pc)
+            _memwrite(pc, ah)
+            nbytes = nbytes + CPUBITS
+            pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
         else:
             pass
@@ -432,7 +447,10 @@ def _exec(pc, macro):
             pc = _npc(pc)
         elif c == ord("`"):
             pc = _npc(pc)
-            a = _memread(pc)
+            al = _memread(pc)
+            pc = _npc(pc)
+            ah = _memread(pc)
+            a = (ah << 8) + al
             _exec(a, True)
             pc = _npc(pc)
         else:
