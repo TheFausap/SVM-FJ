@@ -1,9 +1,11 @@
 import array
 import os
+from io import StringIO
 
 CPUBITS = 8
-MEMLOC = 4096
-STKSIZE = 100
+MEMLOC = 8192
+STKSIZE = 256
+VARSIZE = 1024
 PGMSTART = 0
 
 # Memory addresses will be always aligned to 8 bits boundary
@@ -11,6 +13,7 @@ PGMSTART = 0
 MEMSIZE = MEMLOC * CPUBITS
 STKLOC = MEMLOC * CPUBITS
 PGMAREA = PGMSTART * CPUBITS
+VARAREA = (MEMLOC - STKSIZE - VARSIZE) * CPUBITS
 mem0 = [0] * MEMSIZE
 mem = array.array('b', mem0)
 memoffset = 0
@@ -25,8 +28,9 @@ lblnf = False
 islabel = False
 endf = False
 
-pc = PGMAREA            # program counter
+pc = PGMAREA  # program counter
 sp = STKLOC - CPUBITS  # stack pointer
+vp = VARAREA  # variable/macro area
 
 bs = 0  # bus (16b)
 mr = 0  # memory register
@@ -41,6 +45,14 @@ ev = 0  # excess value in arithmetic operation
 fl = 0  # flags: [---UVZ] U=Underflow, V=Overflow, Z=Zero
 
 
+def _pm(s, e):
+    for x in range(s, e, CPUBITS):
+        s = ""
+        for y in range(x, x + CPUBITS):
+            s = s + str(mem[y])
+        print("MEM[0x{0:04x}]: {1:08b}".format(x, int(s, 2)))
+
+
 def _dbg():
     global r0, r1, r2, r3, pc, ac, mem, fl
     print("R0:" + str(r0))
@@ -51,25 +63,22 @@ def _dbg():
     print("AC:" + str(ac))
     print("EV:" + str(ev))
     print("FL:" + str(fl))
-    yn = input("Print memory (Y/N)")
+    yn = input("Print entire memory? (Y/N)")
     if yn == "y" or yn == "Y":
-        for x in range(0, MEMSIZE, CPUBITS):
-            s = ""
-            for y in range(x, x + CPUBITS):
-                s = s + str(mem[y])
-            print("MEM[0x{0:04x}]: {1:08b}".format(x, int(s, 2)))
+        _pm(0, MEMSIZE)
+    yn = input("Print VARAREA memory? (Y/N)")
+    if yn == "y" or yn == "Y":
+        _pm(VARAREA, VARAREA + VARSIZE)
 
 
-
-def _npc():
-    global pc
-    pc = pc + CPUBITS
+def _npc(pc):
+    return pc + CPUBITS
 
 
 def _nsp():
     global sp
     sp = sp - CPUBITS
-    if sp < STKLOC - STKSIZE:
+    if sp < STKLOC - (STKSIZE * CPUBITS):
         print("Warning: Stack too big... can be overwritten!")
 
 
@@ -112,7 +121,7 @@ def _fixval(v):
 
 def _fixval16(v):
     if v < 0:
-        return ((1 << (2*CPUBITS)) - 1) & v
+        return ((1 << (2 * CPUBITS)) - 1) & v
     elif v > 65535:
         return v & 0xffff
     return v
@@ -162,7 +171,7 @@ def _pop():
 
 def _regwrite(r):
     global mem, sp, r0, r1, r2, r3
-    valh =0
+    valh = 0
     vall = _pop()
     if r == 0:
         valh = _pop()
@@ -192,7 +201,17 @@ def _arg(f):
     if _isint(a):
         return int(a)
     else:
-        return a
+        return a.strip()
+
+
+def body(f):
+    global c, endf
+    c = f.read(1)
+    a = ""
+    while (c != ']'):
+        a = a + c
+        c = f.read(1)
+    return a.strip().split(':')
 
 
 def cmp(t):
@@ -213,9 +232,11 @@ def cmp(t):
             ev = 2
 
 
-def _load(fn):
-    global endf
-    f = open(fn, 'r')
+def _load(f, count):
+    global vp
+
+    pc = count
+    endf = False
     nbytes = 0
     while True:
         c = f.read(1)
@@ -223,33 +244,36 @@ def _load(fn):
         al = 0
         if (not c) or endf:
             break
+        elif c == '\\':
+            _memwrite(pc, ord(c))
+            endf = True
         elif c == '\n' or c == ' ':
             pass
         elif c == '#':
             a = _arg(f)
             _memwrite(pc, ord(c))
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             _memwrite(pc, a)
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '@':
             a = _arg(f)
             if a == 'E':
-                _memwrite(pc, ord(c)+9)
+                _memwrite(pc, ord(c) + 9)
             else:
                 _memwrite(pc, ord(c))
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             ah = int(a) >> 8
             _memwrite(pc, ah)
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             al = int(a) & 0xff
             _memwrite(pc, al)
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '!':
             a = _arg(f)
@@ -260,67 +284,72 @@ def _load(fn):
             if _isint(a):
                 _memwrite(pc, ord(c))
                 nbytes = nbytes + CPUBITS
-                _npc()
+                pc = _npc(pc)
                 _memwrite(pc, a)
                 nbytes = nbytes + CPUBITS
-                _npc()
+                pc = _npc(pc)
             elif a[0] == 'j' or a[0] == 'l' or a[0] == 'g' or a[0] == 'z' or a[0] == 'n':
                 _memwrite(pc, ord(a[0]))
                 nbytes = nbytes + CPUBITS
-                _npc()
+                pc = _npc(pc)
                 if _isint(a[1:]):
                     _memwrite(pc, PGMAREA + int(a[1:]))
                 else:
                     _memwrite(pc, PGMAREA + lblfind(a[1:]))
                 # nbytes = nbytes + CPUBITS
-                _npc()
+                pc = _npc(pc)
             elif a == '+':
                 _memwrite(pc, ord(a))
                 nbytes = nbytes + CPUBITS
-                _npc()
+                pc = _npc(pc)
             elif a[0] == 'C':
                 if a[1:] == "01":
                     _memwrite(pc, ord(a[0]) + 12)
                 else:
                     _memwrite(pc, ord(a[0]) + 48)
                 nbytes = nbytes + CPUBITS
-                _npc()
+                pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '$':
             a = _arg(f)
             _memwrite(pc, ord(c))
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             lblput((a, nbytes))
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '+':
             _memwrite(pc, ord(c))
-            _npc()
+            pc = _npc(pc)
         elif c == '>':
             a = _arg(f)
             a = a << 6
             _memwrite(pc, ord(c) + a)
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '<':
             a = _arg(f)
             a = a << 6
             _memwrite(pc, ord(c) + a)
             nbytes = nbytes + CPUBITS
-            _npc()
+            pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
-        elif c == '\\':
-            _memwrite(pc, ord(c))
-            endf = True
+        elif c == '[':
+            nb = 0
+            nvp = 0
+            a = body(f)  # a[0] = label, a[1] = body
+            lblput((a[0], vp))
+            nb = _load(StringIO(a[1]), vp)
+            vp = vp + nb - CPUBITS
+            f.seek(f.tell() - 1, os.SEEK_SET)
         else:
             pass
+    return nbytes
     f.close()
 
 
-def _exec():
-    global pc, r0, r1, r2, r3, ac, ev
-    pc = PGMAREA
+def _exec(pc, macro):
+    global r0, r1, r2, r3, ac, ev
     endr = False
 
     while not endr:
@@ -329,55 +358,58 @@ def _exec():
         ah = 0
         al = 0
         if c == ord('\\'):
-            endr = True
+            if not macro:
+                endr = True
+            else:
+                return
         if c == ord('#'):
-            _npc()
+            pc = _npc(pc)
             a = _memread(pc)
             _push(a)
-            _npc()
-        if c == ord('@') or c == ord('@')+9:
+            pc = _npc(pc)
+        if c == ord('@') or c == ord('@') + 9:
             if (c & 0xf) == 9:
                 _push(ev)
-                _npc()
+                pc = _npc(pc)
             else:
-                _npc()
+                pc = _npc(pc)
                 ah = _memread(pc)
                 _push(ah)
-                _npc()
+                pc = _npc(pc)
                 al = _memread(pc)
                 _push(al)
-                _npc()
+                pc = _npc(pc)
         elif c == ord('!'):
-            _npc()
+            pc = _npc(pc)
             a = _memread(pc)
             _regwrite(a)
-            _npc()
+            pc = _npc(pc)
         elif c == ord('$'):
-            _npc()
+            pc = _npc(pc)
         elif c == ord('+'):
             ac = ac + r0 + r1
-            _npc()
+            pc = _npc(pc)
         elif c == ord('-'):
             ac = ac - r0 + r1
-            _npc()
+            pc = _npc(pc)
         elif c == ord('*'):
             ac = ac * (r0 + r1)
-            _npc()
+            pc = _npc(pc)
         elif c == ord('/'):
             ac, ev = divmod(ac, (r0 + r1))
-            _npc()
+            pc = _npc(pc)
         elif c == ord('j'):
-            _npc()
+            pc = _npc(pc)
             pc = _memread(pc)
         elif c == ord('l'):
-            _npc()
+            pc = _npc(pc)
             if ev == 2:
                 pc = _memread(pc)
             else:
-                _npc()
+                pc = _npc(pc)
         elif (c == ord('C') + 12) or (c == ord('C') + 48):
             cmp(c & 0x3c)
-            _npc()
+            pc = _npc(pc)
         elif c == ord('<') or (c == ord('<') + 64) or (c == ord('<') + 128) or (c == ord('<') + 192):
             if (c & 0xC0) == 0:
                 r0 = r0 - 1
@@ -387,7 +419,7 @@ def _exec():
                 r2 = r2 - 1
             elif (c & 0xC0) == 3:
                 r3 = r3 - 1
-            _npc()
+            pc = _npc(pc)
         elif c == ord('>') or (c == ord('>') + 64) or (c == ord('>') + 128) or (c == ord('>') + 192):
             if (c & 0xC0) >> 6 == 0:
                 r0 = r0 + 1
@@ -397,12 +429,18 @@ def _exec():
                 r2 = r2 + 1
             elif (c & 0xC0) >> 6 == 3:
                 r3 = r3 + 1
-            _npc()
+            pc = _npc(pc)
+        elif c == ord("`"):
+            pc = _npc(pc)
+            a = _memread(pc)
+            _exec(a, True)
+            pc = _npc(pc)
         else:
             pass
 
 
 if __name__ == '__main__':
-    _load("test1.mem")
-    _exec()
+    f = open("test2.mem", 'r')
+    _load(f, PGMAREA)
+    _exec(PGMAREA, False)
     _dbg()

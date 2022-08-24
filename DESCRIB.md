@@ -3,12 +3,20 @@
 ### GENERAL INFORMATION
 
 - CPUBITS = 8
-- MEMLOC = number of memory locations : 4096
-- STKSIZE = number of bytes: 100
+- MEMLOC = number of memory locations : 8192
+- STKSIZE = number of locations: 256
+- VARSIZE = area where macro are stored: 1024 loc
 - PGMSTART = programs always start at 0 memory
 
+| NAME    | AREA            | SIZE |
+|---------|-----------------|------|
+| MEMSIZE | 0x0000 - 0xFFFF | 64KB |
+| STACK   | 0xFFFF - 0xF7FF | 2KB  |
+| MACROS  | 0xD800 - 0xDBFF | 8KB  |
+
 Memory addresses will be always aligned to 8 bits boundary
-The latest STKSIZE locations are reserved for the stack.
+The latest STKSIZE locations in memory are reserved for the stack.
+After the stack, 1024 locations are for macros.
 
 ### CPU Registries
 
@@ -45,9 +53,12 @@ The operators are case-sensitive.
 - '!z': conditional jump if ev = 0
 - '!n': conditional jump if ev != 0
 - '>': increment by 1 the register pointed by that following number. It can generate overflow and set the flag (V)
-- '<': decrement by 1 the register pointed by that following number. It can generate zero or underflow and set the flags (Z or U)
-- '{}': macro with expansion
-- '[]': macro without expansion
+- '<': decrement by 1 the register pointed by that following number. It can generate zero or underflow and set the
+  flags (Z or U)
+- '{}': macro with expansion (nested macro, not yet implemented)
+- '[]': macro without expansion (no nested macro)
+- '`': calls a macro
+- '\\': end a program or a macro. If it used in a macro, it behaves like a a jump back to the original mem location
 
 
 ### Macros
@@ -55,9 +66,9 @@ The operators are case-sensitive.
 The terms '[]' or '{}' introduce macros.
 The structure of a macro is the following:
 
-[Lname*:args*:content]
+[Lname*:content]
 
-{Lname*:args*:content}
+{Lname*:content}
 
 The name part is optional, if present it's a named macro (like a function).
 The args part is also optional.
