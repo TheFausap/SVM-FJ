@@ -34,13 +34,17 @@ After the stack, 1024 locations are for macros.
 It's in a sort of tape format, FORTH-like.
 The operators are case-sensitive.
 
-- '#' : the following 8-bit number  is pushed to the stack
-- '@' : the following 16-bit number is pushed to the stack. @E is a special form, pushing EV content into the stack
+- '#' : the following 8-bit number is pushed to the stack
+- '@' : the following 16-bit number is pushed to the stack. @E is a
+  special form, pushing EV content into the stack
 - '!0', '!1', etc : the value popped from the stack is stored in R0, R1, etc
-- '!+' : the sum of R0 and R1 are added to AC. AC get the new value. If AC > 65535, EV will contain the excess and 'V' flag will be set
+- '!+' : the sum of R0 and R1 are added to AC. AC get the new value.
+  If AC > 65535, EV will contain the excess and 'V' flag will be set
 - '$' : set a label, used for a jump instruction
 - '!j' : unconditional jump
-- '!C01' ('!C23') : compare instruction between R0 and R1 (R2 and R3). The following table will be used: 
+- '!C01' ('!C23') : compare instruction between R0 and R1 (R2 and R3).
+
+The following table will be used:
 
 | COND    | EV  | Note                       |
 |---------|-----|----------------------------|
@@ -52,13 +56,15 @@ The operators are case-sensitive.
 - '!l': conditional jump if ev = 2
 - '!z': conditional jump if ev = 0
 - '!n': conditional jump if ev != 0
-- '>': increment by 1 the register pointed by that following number. It can generate overflow and set the flag (V)
-- '<': decrement by 1 the register pointed by that following number. It can generate zero or underflow and set the
+- '>': increment by 1 the register pointed by that following number.
+  It can generate overflow and set the flag (V)
+- '<': decrement by 1 the register pointed by that following number.
+  It can generate zero or underflow and set the
   flags (Z or U)
-- '{}': macro with expansion (nested macro, not yet implemented)
-- '[]': macro without expansion (no nested macro)
+- '[]': macro
 - '`': calls a macro
-- '\\': end a program or a macro. If it used in a macro, it behaves like a a jump back to the original mem location
+- '\\': end a program or a macro. If it used in a macro, it behaves
+  like a a jump back to the original memory location
 
 
 ### Macros
@@ -66,9 +72,7 @@ The operators are case-sensitive.
 The terms '[]' or '{}' introduce macros.
 The structure of a macro is the following:
 
-[Lname*:content]
+[name:content]
 
-{Lname*:content}
-
-The name part is optional, if present it's a named macro (like a function).
-The args part is also optional.
+Macros are introduced to save space in the coding and in the memory.
+They have no arguments and they do not return any value.
