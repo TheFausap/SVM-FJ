@@ -6,6 +6,7 @@ CPUBITS = 8
 MEMLOC = 8192
 STKSIZE = 256
 VARSIZE = 1024
+EVSIZE = 1024
 PGMSTART = 0
 
 # Memory addresses will be always aligned to 8 bits boundary
@@ -14,6 +15,7 @@ MEMSIZE = MEMLOC * CPUBITS
 STKLOC = MEMLOC * CPUBITS
 PGMAREA = PGMSTART * CPUBITS
 VARAREA = (MEMLOC - STKSIZE - VARSIZE) * CPUBITS
+EVAREA = (MEMLOC - STKSIZE - VARSIZE - EVSIZE) * CPUBITS
 mem0 = [0] * MEMSIZE
 mem = array.array('b', mem0)
 memoffset = 0
@@ -31,6 +33,7 @@ endf = False
 pc = PGMAREA  # program counter
 sp = STKLOC - CPUBITS  # stack pointer
 vp = VARAREA  # variable/macro area
+ep = EVAREA  # extended EV area for big integer numbers
 
 bs = 0  # bus (16b)
 mr = 0  # memory register
@@ -42,7 +45,8 @@ r2 = 0  # general purpose register 2
 r3 = 0  # general purpose register 3
 ac = 0  # accumulator (16b)
 ev = 0  # excess value in arithmetic operation
-fl = 0  # flags: [---UVZ] U=Underflow, V=Overflow, Z=Zero
+carry = 0  # carry value. Sometimes is also ev
+fl = 0  # flags: [--EUVZ] E=Excess overflow, U=Underflow, V=Overflow, Z=Zero
 
 
 def _pm(s, e):
@@ -69,6 +73,9 @@ def _dbg():
     yn = input("Print VARAREA memory? (Y/N)")
     if yn == "y" or yn == "Y":
         _pm(VARAREA, VARAREA + VARSIZE)
+    yn = input("Print EVAREA memory? (Y/N)")
+    if yn == "y" or yn == "Y":
+        _pm(EVAREA, EVAREA + EVSIZE)
 
 
 def _npc(pc):
@@ -113,18 +120,50 @@ def _fixaddr(v):
 
 def _fixval(v):
     if v < 0:
-        return ((1 << CPUBITS) - 1) & v
-    elif v > 255:
-        return v & 0xff
+        return v + (1 << CPUBITS)
+    elif v > pow(2, CPUBITS) - 1:
+        return v & (pow(2, CPUBITS) - 1)
     return v
 
 
 def _fixval16(v):
     if v < 0:
-        return ((1 << (2 * CPUBITS)) - 1) & v
-    elif v > 65535:
-        return v & 0xffff
+        return v + (1 << (2 * CPUBITS))
+    elif v > pow(2, (2 * CPUBITS)) - 1:
+        return v & (pow(2, (2 * CPUBITS)) - 1)
     return v
+
+
+def _chkresult():
+    global fl, ac, ev, carry, vp
+    if ac > (pow(2, (2 * CPUBITS)) - 1):
+        ev = ac >> 2 * CPUBITS
+        if ev > (pow(2, (2 * CPUBITS)) - 1):
+            _memwrite16(ep, ev >> (2 * CPUBITS))
+            ep = ep + (2 * CPUBITS)
+            _memwrite16(ep, ev & (pow(2, (2 * CPUBITS)) - 1))
+            ep = ep + (2 * CPUBITS)
+            ev = 0
+            fl = fl | 0x8
+        ac = ac & (pow(2, (2 * CPUBITS)) - 1)
+        fl = fl | 0x2
+        carry = 1
+    elif ac < 0:
+        ac = ac + (1 << (2 * CPUBITS))
+        ev = 1
+        carry = 1
+        fl = fl | 0x4
+    elif ac == 0 and ev == 0 and carry == 0:
+        fl = fl | 0x1
+
+
+def _popev():
+    global ep
+    ep = ep - (2 * CPUBITS)
+    evl = _memread16(ep)
+    ep = ep - (2 * CPUBITS)
+    evh = _memread16(ep)
+    return (evh << 16) + evl
 
 
 def _isint(v):
@@ -138,7 +177,19 @@ def _isint(v):
 def _memwrite(loc, val):
     global mem
     val = _fixval(val)
-    valb = f'{val:08b}'
+    valsz = '0' + str(CPUBITS) + 'b'
+    valb = f'{val:{valsz}}'
+    loc = _fixaddr(loc)
+    for b in valb:
+        mem[loc] = int(b)
+        loc = loc + 1
+    pass
+
+
+def _memwrite16(loc, val):
+    global mem
+    val = _fixval(val)
+    valb = f'{val:016b}'
     loc = _fixaddr(loc)
     for b in valb:
         mem[loc] = int(b)
@@ -151,6 +202,16 @@ def _memread(loc):
     ls = ""
     loc = _fixaddr(loc)
     for x in range(CPUBITS):
+        ls = ls + str(mem[loc + x])
+    return int(ls, 2)
+    pass
+
+
+def _memread16(loc):
+    global mem
+    ls = ""
+    loc = _fixaddr(loc)
+    for x in range(16):
         ls = ls + str(mem[loc + x])
     return int(ls, 2)
     pass
@@ -298,7 +359,7 @@ def _load(f, count):
                     _memwrite(pc, PGMAREA + lblfind(a[1:]))
                 # nbytes = nbytes + CPUBITS
                 pc = _npc(pc)
-            elif a == '+':
+            elif a == '+' or a == '-' or a == '*' or a == '/' or a == '^':
                 _memwrite(pc, ord(a))
                 nbytes = nbytes + CPUBITS
                 pc = _npc(pc)
@@ -317,10 +378,6 @@ def _load(f, count):
             pc = _npc(pc)
             lblput((a, nbytes))
             f.seek(f.tell() - 1, os.SEEK_SET)
-        elif c == '+':
-            _memwrite(pc, ord(c))
-            nbytes = nbytes + CPUBITS
-            pc = _npc(pc)
         elif c == '>':
             a = _arg(f)
             a = a << 6
@@ -402,16 +459,28 @@ def _exec(pc, macro):
         elif c == ord('$'):
             pc = _npc(pc)
         elif c == ord('+'):
-            ac = ac + r0 + r1
+            if (fl & 0x8) == 0:
+                ac = ((ev << CPUBITS) + ac) + r0 + r1
+            else:
+                ev = _popev()
+                ac = (ac + ev) + r0 + r1
+            _chkresult()
             pc = _npc(pc)
         elif c == ord('-'):
-            ac = ac - r0 + r1
+            ac = ((ev << CPUBITS) + ac) - (r0 + r1)
+            _chkresult()
             pc = _npc(pc)
         elif c == ord('*'):
-            ac = ac * (r0 + r1)
+            ac = ((ev << (CPUBITS)) + ac) * (r0 + r1)
+            _chkresult()
+            pc = _npc(pc)
+        elif c == ord('^'):
+            ac = (((ev << (CPUBITS)) + ac) * r0) * r1
+            _chkresult()
             pc = _npc(pc)
         elif c == ord('/'):
-            ac, ev = divmod(ac, (r0 + r1))
+            ac, r1 = divmod(((ev << (CPUBITS)) + ac), (r0 + r1))
+            _chkresult()
             pc = _npc(pc)
         elif c == ord('j'):
             pc = _npc(pc)
