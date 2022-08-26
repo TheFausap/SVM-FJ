@@ -135,7 +135,7 @@ def _fixval16(v):
 
 
 def _chkresult():
-    global fl, ac, ev, carry, vp
+    global fl, ac, ev, carry, vp, ep
     if ac > (pow(2, (2 * CPUBITS)) - 1):
         ev = ac >> 2 * CPUBITS
         if ev > (pow(2, (2 * CPUBITS)) - 1):
@@ -227,6 +227,24 @@ def _pop():
     global sp
     _psp()
     v = _memread(sp)
+    return v
+
+
+def _push16(v):
+    global sp
+    vh = v >> 8
+    vl = v & 0xff
+    _memwrite(sp, vh)
+    _nsp()
+    _memwrite(sp, vl)
+    _nsp()
+
+
+def _pop16():
+    global sp
+    _psp()
+    _psp()
+    v = _memread16(sp)
     return v
 
 
@@ -323,17 +341,21 @@ def _load(f, count):
             a = _arg(f)
             if a == 'E':
                 _memwrite(pc, ord(c) + 9)
+                nbytes = nbytes + CPUBITS
+            elif a == 'A':
+                _memwrite(pc, ord(c) + ord('A'))
+                nbytes = nbytes + CPUBITS
             else:
                 _memwrite(pc, ord(c))
-            nbytes = nbytes + CPUBITS
-            pc = _npc(pc)
-            ah = int(a) >> 8
-            _memwrite(pc, ah)
-            nbytes = nbytes + CPUBITS
-            pc = _npc(pc)
-            al = int(a) & 0xff
-            _memwrite(pc, al)
-            nbytes = nbytes + CPUBITS
+                nbytes = nbytes + CPUBITS
+                pc = _npc(pc)
+                ah = int(a) >> 8
+                _memwrite(pc, ah)
+                nbytes = nbytes + CPUBITS
+                pc = _npc(pc)
+                al = int(a) & 0xff
+                _memwrite(pc, al)
+                nbytes = nbytes + CPUBITS
             pc = _npc(pc)
             f.seek(f.tell() - 1, os.SEEK_SET)
         elif c == '!':
@@ -439,9 +461,12 @@ def _exec(pc, macro):
             a = _memread(pc)
             _push(a)
             pc = _npc(pc)
-        if c == ord('@') or c == ord('@') + 9:
+        if c == ord('@') or c == ord('@') + 9 or c == ord('@') + ord('A'):
             if (c & 0xf) == 9:
-                _push(ev)
+                _push16(ev)
+                pc = _npc(pc)
+            elif (c & 0x1) == 1:
+                _push16(ac)
                 pc = _npc(pc)
             else:
                 pc = _npc(pc)
@@ -460,26 +485,26 @@ def _exec(pc, macro):
             pc = _npc(pc)
         elif c == ord('+'):
             if (fl & 0x8) == 0:
-                ac = ((ev << CPUBITS) + ac) + r0 + r1
+                ac = ((ev << (2*CPUBITS)) + ac) + r0 + r1
             else:
                 ev = _popev()
                 ac = (ac + ev) + r0 + r1
             _chkresult()
             pc = _npc(pc)
         elif c == ord('-'):
-            ac = ((ev << CPUBITS) + ac) - (r0 + r1)
+            ac = ((ev << (2*CPUBITS)) + ac) - (r0 + r1)
             _chkresult()
             pc = _npc(pc)
         elif c == ord('*'):
-            ac = ((ev << (CPUBITS)) + ac) * (r0 + r1)
+            ac = ((ev << (2*CPUBITS)) + ac) * (r0 + r1)
             _chkresult()
             pc = _npc(pc)
         elif c == ord('^'):
-            ac = (((ev << (CPUBITS)) + ac) * r0) * r1
+            ac = (((ev << (2*CPUBITS)) + ac) * r0) * r1
             _chkresult()
             pc = _npc(pc)
         elif c == ord('/'):
-            ac, r1 = divmod(((ev << (CPUBITS)) + ac), (r0 + r1))
+            ac, r1 = divmod(((ev << (2*CPUBITS)) + ac), (r0 + r1))
             _chkresult()
             pc = _npc(pc)
         elif c == ord('j'):
@@ -527,7 +552,7 @@ def _exec(pc, macro):
 
 
 if __name__ == '__main__':
-    f = open("test2.mem", 'r')
+    f = open("test3.mem", 'r')
     _load(f, PGMAREA)
     _exec(PGMAREA, False)
     _dbg()

@@ -30,7 +30,6 @@ After the stack, 1024 locations are for macros.
 - EV : excess value in arithmetic operation (16 bits)
 - FL : flags: [--EUVZ] E=Excess overflow, U=Underflow, V=Overflow, Z=Zero. Flag V is also a carry.
 
-
 ### Machine language
 
 It's in a sort of tape format, FORTH-like.
@@ -38,7 +37,8 @@ The operators are case-sensitive.
 
 - '#' : the following 8-bit number is pushed to the stack
 - '@' : the following 16-bit number is pushed to the stack. @E is a
-  special form, pushing EV content into the stack
+  special form, pushing EV content into the stack. @A is a special form
+  to push the AC to the stack
 - '!0', '!1', etc : the value popped from the stack is stored in R0, R1, etc
 - '!+' : the sum of R0 and R1 are added to AC. AC get the new value.
   If AC > 65535, EV will contain the excess and 'V' flag will be set. If EV > 65535 'E' flag will be set
