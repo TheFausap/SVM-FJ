@@ -96,6 +96,9 @@ They have no arguments and they do not return any value.
 
 ### Integer arithmetic
 
-The ac, the registers r0 and r1 are 16bit wide so the integer arithmetic (unsigned) can store value between 0 and 65535
-without overflow. If the overflow occurs, other 16bit are available to calculate the remaining digits.
-The registry used is EV. If EV overflows, there is a dedicated EVAREA (8KB) where to store the ev numbers
+The ac, the registers r0 and r1 are treated as 16bit wide in the VM memory
+(internally they are arbitrary wide) so the integer arithmetic (unsigned) can store value
+between 0 and 65535 without overflow. If the overflow occurs,
+other 16bit are available to calculate the remaining digits.
+The registry used is EV. If EV overflows, there is a dedicated EVAREA
+(1024bits) to store the ev digits.
