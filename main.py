@@ -58,14 +58,19 @@ def _pm(s, e):
 
 
 def _dbg():
-    global r0, r1, r2, r3, pc, ac, mem, fl
+    global r0, r1, r2, r3, pc, ac, mem, fl, ep
+    eve = ''
     print("R0:" + str(r0))
     print("R1:" + str(r1))
     print("R2:" + str(r2))
     print("R3:" + str(r3))
     print("PC:" + str(pc))
     print("AC:" + str(ac))
-    print("EV:" + str(ev))
+    print("EV0:" + str(ev))
+    for b in range(EVAREA, ep):
+        eve = eve + str(mem[b])
+    print("EV1:" + str(int(eve, 2)))
+    print("EVE:" + str(ev + int(eve, 2)))
     print("FL:" + str(fl))
     yn = input("Print entire memory? (Y/N)")
     if yn == "y" or yn == "Y":
@@ -134,21 +139,52 @@ def _fixval16(v):
     return v
 
 
+def _chkev():
+    global ep, ev, fl
+    ovf = 0
+    if ev > (pow(2, (2 * CPUBITS)) - 1):
+        evh = ev >> (2 * CPUBITS)
+        _memwrite16(ep, evh)
+        ep = ep + (2 * CPUBITS)
+        evl = ev & (pow(2, (2 * CPUBITS)) - 1)
+        _memwrite16(ep, evl)
+        ep = ep + (2 * CPUBITS)
+        # ev = ev & (pow(2, (2 * CPUBITS)) - 1)
+        ev = ev - (evh << (2 * CPUBITS)) + evl
+        fl = fl | 0x8
+        ovf = 1
+    return ovf
+
+
+def _chkovf(v):
+    global ep, ev, fl
+    ovf = 0
+    if (fl & 0x8) == 0:
+        v = v
+    else:
+        v = (_popev() << 16) + v
+    if v > (pow(2, (2 * CPUBITS)) - 1):
+        ev = v >> 2 * CPUBITS
+        ovf = _chkev()
+        while ovf == 1:
+            ovf = _chkev()
+        v = v & (pow(2, (2 * CPUBITS)) - 1)
+        fl = fl | 0x2
+    else:
+        ovf = 0
+    return (v, ev, fl, ovf)
+
+
 def _chkresult():
     global fl, ac, ev, carry, vp, ep
-    if ac > (pow(2, (2 * CPUBITS)) - 1):
-        ev = ac >> 2 * CPUBITS
-        if ev > (pow(2, (2 * CPUBITS)) - 1):
-            _memwrite16(ep, ev >> (2 * CPUBITS))
-            ep = ep + (2 * CPUBITS)
-            _memwrite16(ep, ev & (pow(2, (2 * CPUBITS)) - 1))
-            ep = ep + (2 * CPUBITS)
-            ev = 0
-            fl = fl | 0x8
-        ac = ac & (pow(2, (2 * CPUBITS)) - 1)
-        fl = fl | 0x2
-        carry = 1
-    elif ac < 0:
+    ovf = 0
+    (ac, ev, fl, ovf) = _chkovf(ac)
+    while True:
+        if ovf == 0:
+            break
+        else:
+            (ac, ev, fl, ovf) = _chkovf(ac)
+    if ac < 0:
         ac = ac + (1 << (2 * CPUBITS))
         ev = 1
         carry = 1
@@ -485,26 +521,38 @@ def _exec(pc, macro):
             pc = _npc(pc)
         elif c == ord('+'):
             if (fl & 0x8) == 0:
-                ac = ((ev << (2*CPUBITS)) + ac) + r0 + r1
+                ac = ((ev << (2 * CPUBITS)) + ac) + r0 + r1
             else:
-                ev = _popev()
-                ac = (ac + ev) + r0 + r1
+                ev = ev + _popev()
+                ac = ((ev << (2 * CPUBITS)) + ac) + r0 + r1
             _chkresult()
             pc = _npc(pc)
         elif c == ord('-'):
-            ac = ((ev << (2*CPUBITS)) + ac) - (r0 + r1)
+            if (fl & 0x8) == 0:
+                ac = ((ev << (2 * CPUBITS)) + ac) - (r0 + r1)
+            else:
+                ev = ev + _popev()
+                ac = ((ev << (2 * CPUBITS)) + ac) - (r0 + r1)
             _chkresult()
             pc = _npc(pc)
         elif c == ord('*'):
-            ac = ((ev << (2*CPUBITS)) + ac) * (r0 + r1)
+            if (fl & 0x8) == 0:
+                ac = ((ev << (2 * CPUBITS)) + ac) * (r0 + r1)
+            else:
+                ev = ev + _popev()
+                ac = ((ev << (2 * CPUBITS)) + ac) * (r0 + r1)
             _chkresult()
             pc = _npc(pc)
         elif c == ord('^'):
-            ac = (((ev << (2*CPUBITS)) + ac) * r0) * r1
+            if (fl & 0x8) == 0:
+                ac = (((ev << (2 * CPUBITS)) + ac) * r0) * r1
+            else:
+                ev = ev + _popev()
+                ac = (((ev << (2 * CPUBITS)) + ac) * r0) * r1
             _chkresult()
             pc = _npc(pc)
         elif c == ord('/'):
-            ac, r1 = divmod(((ev << (2*CPUBITS)) + ac), (r0 + r1))
+            ac, r1 = divmod(((ev << (2 * CPUBITS)) + ac), (r0 + r1))
             _chkresult()
             pc = _npc(pc)
         elif c == ord('j'):
